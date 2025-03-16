@@ -1,3 +1,6 @@
+This branch provides Riveter with support for Russian language via
+coreferee library.
+
 # Riveter 💪
 
 <br>
