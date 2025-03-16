@@ -27,7 +27,7 @@ nlp.add_pipe("coreferee")
 
 NER_TAGS = ["PER"]
 
-PRONOUNS = ['he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'they', 'them', 'their', 'themselves']
+PRONOUNS = ['он', 'его', 'ему', 'сам', 'она', 'её', 'ей', 'сама', 'они', 'их', 'им', 'сами']
 BASEPATH = os.path.dirname(__file__)
 
 # PRONOUN_MAP = {
