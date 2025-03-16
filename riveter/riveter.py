@@ -484,64 +484,73 @@ class Riveter:
 
     def __parse_and_extract_coref(self, text):
 
-        nsubj_verb_count_dict = defaultdict(int)
-        dobj_verb_count_dict = defaultdict(int)
+    nsubj_verb_count_dict = defaultdict(int)
+    dobj_verb_count_dict = defaultdict(int)
 
-        if text.strip():
+    if text.strip():
+        doc = nlp(text)
 
-            doc = nlp(text)
+        # Create a dictionary to store clusters.  Key: chain ID, Value: list of tokens
+        clusters = defaultdict(list)
+        for token in doc:
+            if token._.coref_chains:
+                for chain in token._.coref_chains:
+                    clusters[chain.chain_id].append(token) #appending token!
 
-            # Look for coreference clusters
-            clusters = [val for key, val in doc.spans.items() if key.startswith('coref_cluster')]
 
-            for _cluster in clusters:
+        for chain_id, tokens in clusters.items():
+            # Get cluster name
+            _text = self.__get_cluster_name_ru(tokens)  # NEW FUNCTION (see below)
 
-                _text = self.__get_cluster_name(_cluster)
+            if _text not in ['это', 'который', 'которая', 'которое', 'которые', 'что', 'кто']:  # Russian equivalents of "that," "which," "who," "what"
+                for token in tokens:
 
-                if _text not in ['that', 'which', 'who', 'what']:
+                    self.persona_count_dict[_text] += 1
+                    self.entity_match_count_dict[_text][str(token).lower()] += 1 #saving token as string!
+                    
+                    if token.dep_ == 'nsubj':
+                        verb = token.head
+                        if verb.pos_ == "VERB":
+                            _verb = verb.lemma_.lower()
+                            nsubj_verb_count_dict[(_text, _verb)] += 1  # Use lemma
 
-                    for _span in _cluster:
-
-                        self.persona_count_dict[_text] += 1
-                        self.entity_match_count_dict[_text][str(_span).lower()] += 1
-
-                        if _span.root.dep_ == 'ROOT':
-                            _verb = _span.root.lemma_.lower()
-                            nsubj_verb_count_dict[(_text, _verb)] += 1
-
-                        elif _span.root.dep_ == 'dobj':
-                            _verb = _span.root.head.lemma_.lower()
+                    elif token.dep_ == 'obj':  # More standard "obj" instead of "dobj"
+                        verb = token.head
+                        if verb.pos_ == "VERB":
+                            _verb = verb.lemma_.lower()
                             dobj_verb_count_dict[(_text, _verb)] += 1
 
-            # Check for single noun phrases that do not appear in coreference clusters
-            for _noun_chunk in doc.noun_chunks:
+        # Handle noun chunks NOT in coreference chains (similar to original)
+        for _noun_chunk in doc.noun_chunks:
+            in_coref_cluster = False
+            for chain_id, tokens in clusters.items():
+                for token in tokens:
+                    if self.__is_overlapping(_noun_chunk.start, _noun_chunk.end, token.i, token.i + 1): #checking overlapping not with spans, but with token indexes
+                        in_coref_cluster = True
+                        break
+                if in_coref_cluster:
+                    break
 
-                in_coref_cluster = False
-                for _cluster in clusters:
-                    for _span in _cluster:
-                        if self.__is_overlapping(_noun_chunk.start, _noun_chunk.end, _span.start, _span.end):
-                            in_coref_cluster = True
+            if not in_coref_cluster:
+                _text = _noun_chunk.text.lower().strip(',.!?\'"')
+                _text = re.sub(r'^(мой|его|её|их|наш|ваш|тот|эта|это|эти|какой-то|какая-то|какое-то|какие-то|один|одна|одно|одни) ', '', _text) #russian determiners
 
-                if not in_coref_cluster:
+                if _text not in ['это', 'который', 'которая', 'которое', 'которые', 'что', 'кто']:
+                    self.persona_count_dict[_text] += 1
+                    self.entity_match_count_dict[_text][str(_noun_chunk).lower()] += 1
 
-                    _text = _noun_chunk.text.lower().strip(',.!?\'"')
-                    _text = re.sub(r'^(my|his|her|their|our|your|the|a|an) ', '', _text)
-
-                    if _text not in ['that', 'which', 'who', 'what']:
-
-                        self.persona_count_dict[_text] += 1
-                        self.entity_match_count_dict[_text][str(_noun_chunk).lower()] += 1
-
-                        if _noun_chunk.root.dep_ == 'nsubj':
-                            _verb = _noun_chunk.root.head.lemma_.lower()
+                    if _noun_chunk.root.dep_ == 'nsubj':
+                        verb = _noun_chunk.root.head
+                        if verb.pos_ == "VERB":
+                            _verb = verb.lemma_.lower()
                             nsubj_verb_count_dict[(_text, _verb)] += 1
-
-                        elif _noun_chunk.root.dep_ == 'dobj':
-                            _verb = _noun_chunk.root.head.lemma_.lower()
+                    elif _noun_chunk.root.dep_ == 'obj':
+                        verb = _noun_chunk.root.head
+                        if verb.pos_ == "VERB":
+                            _verb = verb.lemma_.lower()
                             dobj_verb_count_dict[(_text, _verb)] += 1
 
-
-        return nsubj_verb_count_dict, dobj_verb_count_dict
+    return nsubj_verb_count_dict, dobj_verb_count_dict
 
 
     def __parse_and_extract(self, text, persona_patterns_dict):
