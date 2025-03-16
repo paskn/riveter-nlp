@@ -19,17 +19,10 @@ from tqdm import tqdm
 
 # SPACY & COREF IMPORTS
 import spacy
-import spacy_experimental
-nlp = spacy.load("en_core_web_sm")
-nlp_coref = spacy.load("en_coreference_web_trf")
+import coreferee
 
-# use replace_listeners for the coref components
-nlp_coref.replace_listeners("transformer", "coref", ["model.tok2vec"])
-nlp_coref.replace_listeners("transformer", "span_resolver", ["model.tok2vec"])
-
-# we won't copy over the span cleaner
-nlp.add_pipe("coref", source=nlp_coref)
-nlp.add_pipe("span_resolver", source=nlp_coref)
+nlp = spacy.load("ru_core_news_lg")
+nlp.add_pipe("coreferee")
 
 
 NER_TAGS = ["PERSON"]
