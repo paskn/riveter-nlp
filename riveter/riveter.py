@@ -482,6 +482,53 @@ class Riveter:
     def __is_overlapping(self, x1, x2, y1, y2):
         return max(x1,y1) <= min(x2,y2)
 
+    
+    def __get_cluster_name_ru(self, tokens):
+            # Russian pronoun mapping (Expand this!)
+    PRONOUN_MAP_RU = {
+            "я": ["меня", "мне", "мной", "мой", "моя", "моё", "мои", "я"],
+            "мы": ["нас", "нам", "нами", "наш", "наша", "наше", "наши", "мы"],
+            "ты": ["тебя", "тебе", "тобой", "твой", "твоя", "твоё", "твои", "ты"],
+            "вы": ["вас", "вам", "вами", "ваш", "ваша", "ваше", "ваши", "вы"],
+            "он": ["его", "ему", "им", "него", "нему", "ним", "он"],
+            "она": ["её", "ей", "ею", "неё", "ней", "она"],
+            "оно": ["его", "ему", "им", "него", "нему", "ним", "оно"],
+            "они": ["их", "им", "ими", "них", "ним", "ними", "они"],
+    }
+    REVERSE_PRONOUN_MAP_RU = {
+            _pronoun: _label for _label, _pronouns in PRONOUN_MAP_RU.items()
+        for _pronoun in _pronouns
+    }
+    # 1. Check for consistent pronoun use
+    pronoun_count_dict = defaultdict(int)
+    for token in tokens:
+        if token.pos_ == 'PRON' and token.text.lower() in REVERSE_PRONOUN_MAP_RU:
+                pronoun_count_dict[REVERSE_PRONOUN_MAP_RU[token.text.lower()]] += 1
+
+    for pronoun, count in pronoun_count_dict.items():
+        if count == len(tokens):
+            return pronoun
+
+    # 2.  Prioritize Noun Chunks (if present)
+    for token in tokens:
+        if token.dep_ in ("nsubj", "obj", "obl"): # and token.pos_ == "NOUN":  <- might be too restrictive. Check without first.
+            for chunk in token.doc.noun_chunks:  # Iterate through noun chunks in the *whole document*
+                if token.i >= chunk.start and token.i < chunk.end:
+                        text_to_return =  chunk.text.lower().strip('.,!?\'"-')
+                    return re.sub(r'^(мой|его|её|их|наш|ваш|тот|эта|это|эти|какой-то|какая-то|какое-то|какие-то|один|одна|одно|одни) ', '', text_to_return)
+
+    # 3. Fallback:  Return the lemmatized form of the first noun or proper noun.
+    for token in tokens:
+        if token.pos_ in ("NOUN", "PROPN"):
+            return token.lemma_.lower()
+
+    # 4.  Absolute fallback: first token's text.
+    if tokens:
+        return tokens[0].text.lower()
+    else:
+        return ""  # Empty string if no tokens in cluster
+
+
     def __parse_and_extract_coref(self, text):
 
     nsubj_verb_count_dict = defaultdict(int)
