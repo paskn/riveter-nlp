@@ -25,7 +25,7 @@ nlp = spacy.load("ru_core_news_lg")
 nlp.add_pipe("coreferee")
 
 
-NER_TAGS = ["PERSON"]
+NER_TAGS = ["PER"]
 
 PRONOUNS = ['he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'they', 'them', 'their', 'themselves']
 BASEPATH = os.path.dirname(__file__)
