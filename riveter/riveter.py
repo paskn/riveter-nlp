@@ -12,33 +12,17 @@ import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 
-# import spacy
-# import spacy_experimental
-# # nlp = spacy.load('en_core_web_sm')
-# nlp = spacy.load('en_coreference_web_trf')
-
-# SPACY & COREF IMPORTS
+# SPACY & COREF IMPORTS (for Russian with coreferee)
 import spacy
 import coreferee
 
-nlp = spacy.load("ru_core_news_lg")
+nlp = spacy.load("ru_core_news_lg")  # Or ru_core_news_md, ru_core_news_sm
 nlp.add_pipe("coreferee")
 
+NER_TAGS = ["PERS"]             # according to ru_core_news_lg spec
 
-NER_TAGS = ["PER"]
-
-PRONOUNS = ['он', 'его', 'ему', 'сам', 'она', 'её', 'ей', 'сама', 'они', 'их', 'им', 'сами']
+PRONOUNS = ['he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'they', 'them', 'their', 'themselves'] # doesn't seem to be used anywhere 
 BASEPATH = os.path.dirname(__file__)
-
-# PRONOUN_MAP = {
-#     "i": ["me", "my", "mine"],
-#     "we": ["us", "ours", "our"],
-#     "you": ["yours"]
-# }
-# PRONOUN_SPECIAL_CASES = {}
-# for p, forms in PRONOUN_MAP.items():
-#     for f in forms:
-#         PRONOUN_SPECIAL_CASES[f] = p
 
 
 def default_dict_int():
@@ -479,13 +463,10 @@ class Riveter:
         return re.sub(r'^(my|his|her|their|our|your|the|a|an) ', '', text_to_return)
 
 
-    def __is_overlapping(self, x1, x2, y1, y2):
-        return max(x1,y1) <= min(x2,y2)
-
-    
     def __get_cluster_name_ru(self, tokens):
-            # Russian pronoun mapping (Expand this!)
-    PRONOUN_MAP_RU = {
+        
+        # Russian pronoun mapping (Expand this!)
+        PRONOUN_MAP_RU = {
             "я": ["меня", "мне", "мной", "мой", "моя", "моё", "мои", "я"],
             "мы": ["нас", "нам", "нами", "наш", "наша", "наше", "наши", "мы"],
             "ты": ["тебя", "тебе", "тобой", "твой", "твоя", "твоё", "твои", "ты"],
@@ -494,110 +475,227 @@ class Riveter:
             "она": ["её", "ей", "ею", "неё", "ней", "она"],
             "оно": ["его", "ему", "им", "него", "нему", "ним", "оно"],
             "они": ["их", "им", "ими", "них", "ним", "ними", "они"],
-    }
-    REVERSE_PRONOUN_MAP_RU = {
+        }
+        REVERSE_PRONOUN_MAP_RU = {
             _pronoun: _label for _label, _pronouns in PRONOUN_MAP_RU.items()
-        for _pronoun in _pronouns
-    }
-    # 1. Check for consistent pronoun use
-    pronoun_count_dict = defaultdict(int)
-    for token in tokens:
-        if token.pos_ == 'PRON' and token.text.lower() in REVERSE_PRONOUN_MAP_RU:
+            for _pronoun in _pronouns
+        }
+
+        # 1. Check for consistent pronoun use (This part remains the same)
+        pronoun_count_dict = defaultdict(int)
+        
+        # print(tokens)
+        for token in tokens:
+            if token.pos_ == 'PRON' and token.text.lower() in REVERSE_PRONOUN_MAP_RU:
                 pronoun_count_dict[REVERSE_PRONOUN_MAP_RU[token.text.lower()]] += 1
 
-    for pronoun, count in pronoun_count_dict.items():
-        if count == len(tokens):
-            return pronoun
+        
 
-    # 2.  Prioritize Noun Chunks (if present)
-    for token in tokens:
-        if token.dep_ in ("nsubj", "obj", "obl"): # and token.pos_ == "NOUN":  <- might be too restrictive. Check without first.
-            for chunk in token.doc.noun_chunks:  # Iterate through noun chunks in the *whole document*
-                if token.i >= chunk.start and token.i < chunk.end:
-                        text_to_return =  chunk.text.lower().strip('.,!?\'"-')
-                    return re.sub(r'^(мой|его|её|их|наш|ваш|тот|эта|это|эти|какой-то|какая-то|какое-то|какие-то|один|одна|одно|одни) ', '', text_to_return)
+        for pronoun, count in pronoun_count_dict.items():
+            if count == len(tokens):
+                return pronoun
 
-    # 3. Fallback:  Return the lemmatized form of the first noun or proper noun.
-    for token in tokens:
-        if token.pos_ in ("NOUN", "PROPN"):
-            return token.lemma_.lower()
+        # 2. Find Nominal Heads and Expand (New Logic)
+        potential_phrases = []
+        
+        # print(tokens)
+        for token in tokens:
+            # print(token.dep_)
+            if token.dep_ in ("nsubj", "obj", "iobj", "obl", "ROOT", "conj"):
+                phrase = [token]
+                
+                # Expand Left
+                left_token = token.left_edge
+                
+                while (
+                        left_token != token and
+                        left_token.dep_ not in ("punct", "verb") and
+                        left_token.pos_ not in ("VERB", "AUX") and
+                        (not left_token._.coref_chains or not any(left_token in chain for chain in left_token._.coref_chains))
+                ):
+                    
+                    if left_token.dep_ in ("amod", "compound", "det", "nummod", "nmod", "appos"): # Add more as needed
+                        
+                        phrase.insert(0, left_token)
 
-    # 4.  Absolute fallback: first token's text.
-    if tokens:
-        return tokens[0].text.lower()
-    else:
-        return ""  # Empty string if no tokens in cluster
+                        if left_token.left_edge != left_token:  # Avoid self-assignment
+                            left_token = left_token.left_edge
+                        else:
+                            break
+                    else:
+                        break
 
+                # Expand Right
+                right_token = token.right_edge
+                while right_token != token and right_token.dep_ not in ("punct", "verb") and right_token.pos_ not in ("VERB", "AUX") and not any(right_token in chain for chain in right_token._.coref_chains):
+                    if right_token.dep_ in ("amod", "compound", "det", "nummod", "nmod", "appos"):  # Add more as needed
+                        phrase.append(right_token)
+                        right_token = right_token.right_edge
+                    else:
+                        break
+                potential_phrases.append(phrase)
+
+        if potential_phrases:
+            # Prioritize the longest phrase
+            best_phrase = max(potential_phrases, key=len)
+            text_to_return =  " ".join(t.text.lower() for t in best_phrase).strip('.,!?\'"-')
+            return re.sub(r'^(мой|его|её|их|наш|ваш|тот|эта|это|эти|какой-то|какая-то|какое-то|какие-то|один|одна|одно|одни) ', '', text_to_return)
+
+        # 3. Fallback:  Return the lemmatized form of the first noun or proper noun.
+        for token in tokens:
+            if token.pos_ in ("NOUN", "PROPN"):
+                return token.lemma_.lower()
+
+        # 4.  Absolute fallback: first token's text.
+        if tokens:
+            return tokens[0].text.lower()
+        else:
+            return ""  # Empty string if no tokens in cluster
+
+
+
+    def __is_overlapping(self, x1, x2, y1, y2):
+        return max(x1,y1) <= min(x2,y2)
 
     def __parse_and_extract_coref(self, text):
+        # LANG = "ru"
+        # DEBUG: turn on the method for coreferee instead of neuralcoref
+        # if LANG == "ru":
+        #     self.__get_cluster_name = self.__get_cluster_name_ru
 
-    nsubj_verb_count_dict = defaultdict(int)
-    dobj_verb_count_dict = defaultdict(int)
+        nsubj_verb_count_dict = defaultdict(int)
+        dobj_verb_count_dict = defaultdict(int)
 
-    if text.strip():
-        doc = nlp(text)
+        if text.strip():
 
-        # Create a dictionary to store clusters.  Key: chain ID, Value: list of tokens
-        clusters = defaultdict(list)
-        for token in doc:
-            if token._.coref_chains:
-                for chain in token._.coref_chains:
-                    clusters[chain.chain_id].append(token) #appending token!
+            doc = nlp(text)
+            
+            # Look for coreference clusters
+            # clusters = [val for key, val in doc.spans.items() if key.startswith('coref_cluster')]
+            clusters = defaultdict(list)
+            for token in doc:
+                if token._.coref_chains:
+                    for chain in token._.coref_chains:
+                        clusters[chain.index].append(token)
+            
+            # for _cluster in clusters:
+            #     print("DEBUG: asking for cluster_name_ru")
+            #     print(_cluster)
+            #     _text = self.__get_cluster_name_ru(_cluster)
 
+            #     if _text not in ['that', 'which', 'who', 'what']:
 
-        for chain_id, tokens in clusters.items():
-            # Get cluster name
-            _text = self.__get_cluster_name_ru(tokens)  # NEW FUNCTION (see below)
+            #         for _span in _cluster:
 
-            if _text not in ['это', 'который', 'которая', 'которое', 'которые', 'что', 'кто']:  # Russian equivalents of "that," "which," "who," "what"
-                for token in tokens:
+            #             self.persona_count_dict[_text] += 1
+            #             self.entity_match_count_dict[_text][str(_span).lower()] += 1
 
-                    self.persona_count_dict[_text] += 1
-                    self.entity_match_count_dict[_text][str(token).lower()] += 1 #saving token as string!
-                    
-                    if token.dep_ == 'nsubj':
-                        verb = token.head
-                        if verb.pos_ == "VERB":
-                            _verb = verb.lemma_.lower()
-                            nsubj_verb_count_dict[(_text, _verb)] += 1  # Use lemma
+            #             if _span.root.dep_ == 'ROOT':
+            #                 _verb = _span.root.lemma_.lower()
+            #                 nsubj_verb_count_dict[(_text, _verb)] += 1
 
-                    elif token.dep_ == 'obj':  # More standard "obj" instead of "dobj"
-                        verb = token.head
-                        if verb.pos_ == "VERB":
-                            _verb = verb.lemma_.lower()
-                            dobj_verb_count_dict[(_text, _verb)] += 1
-
-        # Handle noun chunks NOT in coreference chains (similar to original)
-        for _noun_chunk in doc.noun_chunks:
-            in_coref_cluster = False
+            #             elif _span.root.dep_ == 'dobj':
+            #                 _verb = _span.root.head.lemma_.lower()
+            #                 dobj_verb_count_dict[(_text, _verb)] += 1
             for chain_id, tokens in clusters.items():
-                for token in tokens:
-                    if self.__is_overlapping(_noun_chunk.start, _noun_chunk.end, token.i, token.i + 1): #checking overlapping not with spans, but with token indexes
-                        in_coref_cluster = True
-                        break
-                if in_coref_cluster:
-                    break
-
-            if not in_coref_cluster:
-                _text = _noun_chunk.text.lower().strip(',.!?\'"')
-                _text = re.sub(r'^(мой|его|её|их|наш|ваш|тот|эта|это|эти|какой-то|какая-то|какое-то|какие-то|один|одна|одно|одни) ', '', _text) #russian determiners
+                # Get cluster name
+                _text = self.__get_cluster_name_ru(tokens)
 
                 if _text not in ['это', 'который', 'которая', 'которое', 'которые', 'что', 'кто']:
-                    self.persona_count_dict[_text] += 1
-                    self.entity_match_count_dict[_text][str(_noun_chunk).lower()] += 1
+                    
+                    for token in tokens:
+                        self.persona_count_dict[_text] += 1
+                        self.entity_match_count_dict[_text][str(token).lower()] += 1
 
-                    if _noun_chunk.root.dep_ == 'nsubj':
-                        verb = _noun_chunk.root.head
-                        if verb.pos_ == "VERB":
-                            _verb = verb.lemma_.lower()
-                            nsubj_verb_count_dict[(_text, _verb)] += 1
-                    elif _noun_chunk.root.dep_ == 'obj':
-                        verb = _noun_chunk.root.head
-                        if verb.pos_ == "VERB":
-                            _verb = verb.lemma_.lower()
-                            dobj_verb_count_dict[(_text, _verb)] += 1
+                        if token.dep_ == 'nsubj':
+                            verb = token.head
+                            if verb.pos_ == "VERB":
+                                _verb = verb.lemma_.lower()
+                                nsubj_verb_count_dict[(_text, _verb)] += 1
 
-    return nsubj_verb_count_dict, dobj_verb_count_dict
+                        elif token.dep_ == 'obj':
+                            verb = token.head
+                            if verb.pos_ == "VERB":
+                                _verb = verb.lemma_.lower()
+                                dobj_verb_count_dict[(_text, _verb)] += 1
+            
+
+            # Check for single noun phrases that do not appear in coreference clusters
+
+            # for _noun_chunk in doc.noun_chunks:
+
+            #     in_coref_cluster = False
+            #     for _cluster in clusters:
+            #         for _span in _cluster:
+            #             if self.__is_overlapping(_noun_chunk.start, _noun_chunk.end, _span.start, _span.end):
+            #                 in_coref_cluster = True
+
+            #     if not in_coref_cluster:
+
+            #         _text = _noun_chunk.text.lower().strip(',.!?\'"')
+            #         _text = re.sub(r'^(my|his|her|their|our|your|the|a|an) ', '', _text)
+
+            #         if _text not in ['that', 'which', 'who', 'what']:
+
+            #             self.persona_count_dict[_text] += 1
+            #             self.entity_match_count_dict[_text][str(_noun_chunk).lower()] += 1
+
+            #             if _noun_chunk.root.dep_ == 'nsubj':
+            #                 _verb = _noun_chunk.root.head.lemma_.lower()
+            #                 nsubj_verb_count_dict[(_text, _verb)] += 1
+
+            #             elif _noun_chunk.root.dep_ == 'dobj':
+            #                 _verb = _noun_chunk.root.head.lemma_.lower()
+            #                 dobj_verb_count_dict[(_text, _verb)] += 1
+            for token in doc:
+                if any(token in tokens for tokens in clusters.values()):
+                    continue  # Skip tokens already in a coreference cluster
+
+                if token.dep_ in ("nsubj", "obj", "iobj", "obl", "ROOT", "conj"):
+                    #  Build a phrase based on this token, like in __get_cluster_name_ru
+                    phrase = [token]
+                    # Expand Left
+                    left_token = token.left_edge
+                    while left_token != token and left_token.dep_ not in ("punct", "verb") and left_token.pos_ not in ("VERB", "AUX") and not any(left_token in chain for chain in left_token._.coref_chains):
+                        if left_token.dep_ in ("amod", "compound", "det", "nummod", "nmod", "appos"):  # Add more as needed
+                            phrase.insert(0, left_token)
+                            # left_token = left_token.left_edge
+                            if left_token.left_edge != left_token:
+                                left_token = token.left_edge
+                            else:
+                                break
+                        else:
+                            break
+
+                    # Expand Right
+                    right_token = token.right_edge
+                    while right_token != token and right_token.dep_ not in ("punct", "verb") and right_token.pos_ not in ("VERB", "AUX") and not any(right_token in chain for chain in right_token._.coref_chains):
+                        if right_token.dep_ in ("amod", "compound", "det", "nummod", "nmod", "appos"):  # Add more as needed
+                            phrase.append(right_token)
+                            right_token = right_token.right_edge
+                        else:
+                            break
+
+                    _text = " ".join(t.text.lower() for t in phrase).strip('.,!?\'"')
+                    _text = re.sub(r'^(мой|его|её|их|наш|ваш|тот|эта|это|эти|какой-то|какая-то|какое-то|какие-то|один|одна|одно|одни) ', '', _text)
+
+                    if _text not in ['это', 'который', 'которая', 'которое', 'которые', 'что', 'кто']:
+                        self.persona_count_dict[_text] += 1
+                        self.entity_match_count_dict[_text][str(phrase[0].doc[phrase[0].i: phrase[-1].i + 1]).lower()] += 1  # Use the correct span.
+
+                        if token.dep_ == 'nsubj':
+                            verb = phrase[-1].head  # Use the head of the *last* token in the phrase
+                            if verb.pos_ == "VERB":
+                                _verb = verb.lemma_.lower()
+                                nsubj_verb_count_dict[(_text, _verb)] += 1
+                        elif token.dep_ == 'obj':
+                            verb = phrase[-1].head
+                            if verb.pos_ == "VERB":
+                                _verb = verb.lemma_.lower()
+                                dobj_verb_count_dict[(_text, _verb)] += 1            
+
+
+        return nsubj_verb_count_dict, dobj_verb_count_dict
 
 
     def __parse_and_extract(self, text, persona_patterns_dict):
